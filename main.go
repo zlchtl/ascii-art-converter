@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -32,6 +33,16 @@ type ConvertParams struct {
     CharSet string `json:"charSet" binding:"required,min=2,max=32"`
 }
 
+var logFile *os.File
+
+func init(){
+	logFile, err := os.OpenFile("server.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err!=nil{fmt.Println("Error opening log file:", err); os.Exit(1)}
+	
+	gin.DefaultWriter = io.MultiWriter(os.Stdout, logFile)
+	gin.DefaultErrorWriter = io.MultiWriter(os.Stderr, logFile)
+}
+
 func convertHandler(c *gin.Context){
 	allowedTypes := map[string]bool{
 		"image/jpeg": true,
@@ -39,11 +50,13 @@ func convertHandler(c *gin.Context){
 	}
 
 	fileHeader, err := c.FormFile("file")
-	if err != nil {c.JSON(400, gin.H{"error":"File upload required"}); return}
+	if err != nil {
+		c.JSON(400, gin.H{"error":"File upload required"})
+		return
+	}
 
 	file, err := fileHeader.Open()
 	if err != nil {
-		log.Printf("Error processing image: %v", err)
 		c.JSON(500, gin.H{"error": "Failed to read file"})
 		return
 	}
@@ -78,7 +91,6 @@ func convertHandler(c *gin.Context){
 
 	ascii, err := convertToASCII(ctx, file, fileHeader.Filename, params)
 	if err != nil {
-		log.Printf("Processing error: %v", err)
 		if ctx.Err() == context.DeadlineExceeded {
             c.JSON(504, gin.H{"error": "Processing timeout"})
         } else {
@@ -180,8 +192,8 @@ func aboutHandler(c *gin.Context){
 }
 
 func main(){
-	//gin.SetMode(gin.ReleaseMode)
-	//log.SetOutput(io.Discard)
+	gin.SetMode(gin.ReleaseMode)
+	log.SetOutput(io.Discard)
 	router := gin.Default()
 	router.MaxMultipartMemory = 8 << 20
 	router.POST("/convert", convertHandler)
@@ -194,6 +206,8 @@ func main(){
         WriteTimeout: 30 * time.Second,
         IdleTimeout: 60 * time.Second,
     }
+
+	defer logFile.Close()
 
     if err := srv.ListenAndServe(); err != nil {
         log.Fatalf("Server error: %v", err)
