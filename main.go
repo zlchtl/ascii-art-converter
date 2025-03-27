@@ -2,42 +2,70 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/draw"
-	"image/jpeg"
+	"io"
 	"log"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nfnt/resize"
 )
 
-var MAXSIZE int = 100
-const ASCII_CHARS  = "@%#*+=-:. "
+const (
+	DEFAULTSIZE int = 100
+	ASCII_CHARS  = "@%#*+=-:. "
+)
 
+type ConvertParams struct {
+    Size int `json:"Size" binding:"gte=1,lte=300"`
+	CharSet string `json:"charSet" binding:"required,min=2,max=32"`
+}
 
 func convertHandler(c *gin.Context){
-	data, err := c.GetRawData()
-	if err != nil{
+	fileHeader, err := c.FormFile("file")
+	if err != nil {c.JSON(400, gin.H{"error":"File upload required"}); return}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		log.Printf("Error processing image: %v", err)
+		c.JSON(500, gin.H{"error": "Failed to read file"})
+		return
+	}
+	defer file.Close()
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+    defer cancel()
+
+	var params ConvertParams
+	if err := c.ShouldBind(&params); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	ascii, err := convertToASCII(data)
+	ascii, err := convertToASCII(ctx, file, params)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("Timeout processing image after 20s")
+            c.JSON(504, gin.H{"error": "Processing timeout"})
+        } else {
+            c.JSON(500, gin.H{"error": err.Error()})
+        }
+        return
 	}
 
 	c.JSON(200, gin.H{"ascii": ascii})
+	c.Header("Content-Type", "application/json; charset=utf-8")
 }
 
-func resizeImage(img image.Image) image.Image{
-	x, y := img.Bounds().Dx(), img.Bounds().Dx()
-	scale := float64(x)/float64(MAXSIZE)
+func resizeImage(img image.Image, size int) image.Image{
+	x, y := img.Bounds().Dx(), img.Bounds().Dy()
+	scale := float64(x)/float64(size)
 	if x<y {
-		scale = float64(y)/float64(MAXSIZE)
+		scale = float64(y)/float64(size)
 	}
 	return resize.Resize(uint(float64(x)/scale), uint(float64(y)/scale),img, resize.Lanczos3)
 }
@@ -49,33 +77,45 @@ func convertToGray(img image.Image) *image.Gray {
     return gray
 }
 
-func convertToASCII(data []byte) (string, error){
-	img, err := jpeg.Decode(bytes.NewReader(data))
+func convertToASCII(ctx context.Context, file io.Reader, params ConvertParams) (string, error){
+	select {
+    case <-ctx.Done():
+        return "", ctx.Err()
+    default:
+    }
+	
+	img, _, err := image.Decode(io.LimitReader(file, 10<<20))
 	if err!=nil{return "", err}
-	img = resizeImage(img)
-	gray := convertToGray(img)
-	return generateASCII(gray), nil
 
+	select {
+    case <-ctx.Done():
+        return "", ctx.Err()
+    default:
+    }
+
+	if params.Size > 300 || params.Size <= 0 {params.Size = DEFAULTSIZE}
+	if utf8.RuneCountInString(params.CharSet) < 2 || utf8.RuneCountInString(params.CharSet) > 32 {params.CharSet = ASCII_CHARS}
+
+	img = resizeImage(img, params.Size)
+	gray := convertToGray(img)
+	return generateASCII(gray, params.CharSet), nil
 }
 
-func generateASCII(img *image.Gray) string {
+func generateASCII(img *image.Gray, charset string) string {
 	width, height := img.Bounds().Dx(), img.Bounds().Dy()
 	var asciiArt bytes.Buffer
 
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
-			char := brightnessToASCII(float64(img.GrayAt(x, y).Y) / 255.0)
+			charsetLen := float64(len(charset)-1)
+			brightness := float64(img.GrayAt(x, y).Y)/255.0
+			char := charset[int(brightness * charsetLen)]
 			asciiArt.WriteByte(char)
 		}
 		asciiArt.WriteByte('\n')
 	}
 
 	return asciiArt.String()
-}
-
-func brightnessToASCII(b float64) byte {
-	index := int(b * float64(len(ASCII_CHARS)-1))
-	return ASCII_CHARS[index]
 }
 
 func aboutHandler(c *gin.Context){
@@ -86,6 +126,8 @@ func aboutHandler(c *gin.Context){
 }
 
 func main(){
+	//gin.SetMode(gin.ReleaseMode)
+	//log.SetOutput(io.Discard)
 	router := gin.Default()
 	router.MaxMultipartMemory = 8 << 20
 	router.POST("/convert", convertHandler)
