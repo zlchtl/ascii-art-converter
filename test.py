@@ -1,10 +1,6 @@
 import os
 
 #скрипт для автотестирования эндпоинтов
-
-print(">>> curl.exe -X POST http://127.0.0.1:8080/convert --data 'key=value'")
-os.system("curl.exe -X POST http://127.0.0.1:8080/convert --data 'key=value'")
-
 print("\n\n>>> curl.exe -X GET http://127.0.0.1:8080/about")
 os.system("curl.exe -X GET http://127.0.0.1:8080/about")
 

@@ -5,6 +5,9 @@ import (
 	"image"
 	"image/draw"
 	"image/jpeg"
+	"log"
+	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nfnt/resize"
@@ -84,7 +87,19 @@ func aboutHandler(c *gin.Context){
 
 func main(){
 	router := gin.Default()
+	router.MaxMultipartMemory = 8 << 20
 	router.POST("/convert", convertHandler)
 	router.GET("/about", aboutHandler)
-	router.Run(":8080")
+	
+    srv := &http.Server{
+        Addr:    ":8080",
+        Handler: router,
+        ReadTimeout: 10 * time.Second,
+        WriteTimeout: 30 * time.Second,
+        IdleTimeout: 60 * time.Second,
+    }
+
+    if err := srv.ListenAndServe(); err != nil {
+        log.Fatalf("Server error: %v", err)
+    }
 }
