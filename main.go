@@ -13,8 +13,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -207,9 +209,26 @@ func main(){
         IdleTimeout: 60 * time.Second,
     }
 
-	defer logFile.Close()
+    quit := make(chan os.Signal, 1)
+    signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-    if err := srv.ListenAndServe(); err != nil {
-        log.Fatalf("Server error: %v", err)
+    go func() {
+        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            log.Fatalf("Server error: %v", err)
+        }
+    }()
+
+    <-quit
+    fmt.Println("Shutting down server...")
+
+    if logFile != nil {logFile.Close()}
+
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    if err := srv.Shutdown(ctx); err != nil {
+        log.Fatalf("Server forced to shutdown: %v", err)
     }
+
+    fmt.Println("Server exiting")
 }
