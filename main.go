@@ -3,11 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"image"
 	"image/draw"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -18,14 +24,20 @@ import (
 const (
 	DEFAULTSIZE int = 100
 	ASCII_CHARS  = "@%#*+=-:. "
+	MAX_IMAGE_SIZE int64  = 8 << 20
 )
 
 type ConvertParams struct {
-    Size int `json:"Size" binding:"gte=1,lte=300"`
-	CharSet string `json:"charSet" binding:"required,min=2,max=32"`
+    Size    int    `json:"size" binding:"gte=1,lte=300"`
+    CharSet string `json:"charSet" binding:"required,min=2,max=32"`
 }
 
 func convertHandler(c *gin.Context){
+	allowedTypes := map[string]bool{
+		"image/jpeg": true,
+		"image/png":  true,
+	}
+
 	fileHeader, err := c.FormFile("file")
 	if err != nil {c.JSON(400, gin.H{"error":"File upload required"}); return}
 
@@ -37,19 +49,37 @@ func convertHandler(c *gin.Context){
 	}
 	defer file.Close()
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
-    defer cancel()
-
-	var params ConvertParams
-	if err := c.ShouldBind(&params); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
+	buf := make([]byte, 512)
+	if _, err = file.Read(buf); err != nil {
+		c.JSON(400, gin.H{"error": "Failed to read file header"})
 		return
 	}
 
-	ascii, err := convertToASCII(ctx, file, params)
+	if _, err = file.Seek(0, 0); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to reset file pointer"})
+		return
+	}
+
+	mimeType := http.DetectContentType(buf)
+	if !allowedTypes[mimeType] {
+		c.JSON(400, gin.H{"error": "Unsupported image type"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+    defer cancel()
+
+	jsonData := c.PostForm("params")
+    var params ConvertParams
+    if err := json.Unmarshal([]byte(jsonData), &params); err != nil {
+        c.JSON(400, gin.H{"error": "Invalid JSON format: " + err.Error()})
+        return
+    }
+
+	ascii, err := convertToASCII(ctx, file, fileHeader.Filename, params)
 	if err != nil {
+		log.Printf("Processing error: %v", err)
 		if ctx.Err() == context.DeadlineExceeded {
-			log.Printf("Timeout processing image after 20s")
             c.JSON(504, gin.H{"error": "Processing timeout"})
         } else {
             c.JSON(500, gin.H{"error": err.Error()})
@@ -64,8 +94,8 @@ func convertHandler(c *gin.Context){
 func resizeImage(img image.Image, size int) image.Image{
 	x, y := img.Bounds().Dx(), img.Bounds().Dy()
 	scale := float64(x)/float64(size)
-	if x<y {
-		scale = float64(y)/float64(size)
+	if x < y {
+		scale = float64(y) / float64(size)
 	}
 	return resize.Resize(uint(float64(x)/scale), uint(float64(y)/scale),img, resize.Lanczos3)
 }
@@ -77,27 +107,51 @@ func convertToGray(img image.Image) *image.Gray {
     return gray
 }
 
-func convertToASCII(ctx context.Context, file io.Reader, params ConvertParams) (string, error){
-	select {
-    case <-ctx.Done():
-        return "", ctx.Err()
-    default:
-    }
-	
-	img, _, err := image.Decode(io.LimitReader(file, 10<<20))
-	if err!=nil{return "", err}
+func convertToASCII(ctx context.Context, file io.Reader, filename string, params ConvertParams) (string, error){
+	ext := strings.ToLower(filepath.Ext(filename))
+    var decodeFunc func(io.Reader) (image.Image, error)
 
-	select {
+    switch ext {
+    case ".jpg", ".jpeg":
+        decodeFunc = func(r io.Reader) (image.Image, error) {
+            return jpeg.Decode(r)
+        }
+    case ".png":
+        decodeFunc = func(r io.Reader) (image.Image, error) {
+            return png.Decode(r)
+        }
+    default:
+        return "", fmt.Errorf("unsupported file format: %s", ext)
+    }
+
+    select {
     case <-ctx.Done():
         return "", ctx.Err()
     default:
     }
+
+    img, err := decodeFunc(io.LimitReader(file, MAX_IMAGE_SIZE))
+    if err != nil {
+        return "", fmt.Errorf("failed to decode image: %v", err)
+    }
+
+	bounds := img.Bounds()
+	if bounds.Dx() > 5000 || bounds.Dy() > 5000 {
+		return "", fmt.Errorf("image dimensions too large")
+	}
 
 	if params.Size > 300 || params.Size <= 0 {params.Size = DEFAULTSIZE}
 	if utf8.RuneCountInString(params.CharSet) < 2 || utf8.RuneCountInString(params.CharSet) > 32 {params.CharSet = ASCII_CHARS}
 
 	img = resizeImage(img, params.Size)
 	gray := convertToGray(img)
+
+	select {
+    case <-ctx.Done():
+        return "", ctx.Err()
+    default:
+    }
+
 	return generateASCII(gray, params.CharSet), nil
 }
 
