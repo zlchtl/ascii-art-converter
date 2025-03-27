@@ -3,6 +3,7 @@
 *.bin
 *.out
 *.test
+*.txt
 
 # Файлы IDE
 .idea/
