@@ -12,7 +12,7 @@ This project provides a service that converts images to ASCII art. The service c
 
 ### 2. Data Structures
 
-##### ConvertParams
+#### `ConvertParams`
 
 This structure contains the parameters used for converting the image:
 ```go
@@ -26,7 +26,7 @@ type ConvertParams struct {
 
 ### 3. HTTP Handlers
 
-##### `convertHandler(c *gin.Context)`
+#### `convertHandler(c *gin.Context)`
 
 Handles POST requests to convert an image to ASCII art. You need to provide an image and parameters in the request body.
 
@@ -54,7 +54,7 @@ curl -X POST http://localhost:8080/convert
 {"error": "Error message"}
 ```
 
-##### `aboutHandler(c *gin.Context)`
+#### `aboutHandler(c *gin.Context)`
 
 Handles GET requests to provide information about the project.
 
@@ -68,7 +68,7 @@ Handles GET requests to provide information about the project.
 
 ### 4. Image Processing Functions
 
-##### `resizeImage(img image.Image, size int) image.Image`
+#### `resizeImage(img image.Image, size int) image.Image`
 
 Resizes the image to the specified size while preserving the aspect ratio.
 
@@ -79,7 +79,7 @@ Resizes the image to the specified size while preserving the aspect ratio.
 **Returns**:
 - A resized image.
 
-##### `convertToGray(img image.Image) *image.Gray`
+#### `convertToGray(img image.Image) *image.Gray`
 
 Converts an image to grayscale.
 
@@ -89,7 +89,7 @@ Converts an image to grayscale.
 **Returns**:
 - A grayscale image.
 
-##### `convertToASCII(ctx context.Context, file io.Reader, filename string, params ConvertParams) (string, error)`
+#### `convertToASCII(ctx context.Context, file io.Reader, filename string, params ConvertParams) (string, error)`
 
 Converts the image to ASCII art.
 
@@ -102,7 +102,7 @@ Converts the image to ASCII art.
 **Returns**:
 - A string containing the ASCII art.
 
-##### `generateASCII(img *image.Gray, charset string) string`
+#### `generateASCII(img *image.Gray, charset string) string`
 
 Generates the ASCII art string from a grayscale image.
 
