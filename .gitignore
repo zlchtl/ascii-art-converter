@@ -1,21 +1,18 @@
-# Игнорируем бинарные и временные файлы
 *.exe
 *.bin
 *.out
 *.test
 *.txt
 
-# Файлы IDE
 .idea/
 .vscode/
 *.swp
 
-# Логи и артефакты
 *.log
 *.jpg
 *.png
 *.tmp
 
-# Игнорируем локальные зависимости (если не используете vendor)
-vendor/
-go.work
+Dockerfile
+.dockerignore
+docker-compose.yml
